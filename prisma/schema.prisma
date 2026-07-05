@@ -1,0 +1,163 @@
+// Voice-Based Connect — Prisma schema (SQLite for local development)
+// Relational schema: Users, LoginHistory, AudioFiles, Sessions, Transcripts,
+// EmotionResults, SpeakerVerification, QualityAnalysis, EvaluationScores, Reports.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  name            String
+  passwordHash    String
+  role            String   @default("USER") // "USER" | "ADMIN"
+  resetToken      String?
+  resetTokenExpiry DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  audioFiles    AudioFile[]
+  sessions      Session[]
+  loginHistory  LoginHistory[]
+}
+
+model LoginHistory {
+  id        String   @id @default(cuid())
+  userId    String?
+  email     String
+  ipAddress String?
+  userAgent String?
+  success   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+model AudioFile {
+  id           String   @id @default(cuid())
+  userId       String
+  filename     String   // stored filename on disk
+  originalName String
+  mimeType     String
+  size         Int      // bytes
+  durationSec  Float    @default(0)
+  storagePath  String
+  createdAt    DateTime @default(now())
+
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions Session[]
+
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  audioFileId  String?
+  title        String   @default("Voice Session")
+  durationSec  Float    @default(0)
+  language     String   @default("en")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  audioFile        AudioFile?          @relation(fields: [audioFileId], references: [id], onDelete: SetNull)
+  transcript       Transcript?
+  emotionResult    EmotionResult?
+  speakerVerification SpeakerVerification?
+  qualityAnalysis  QualityAnalysis?
+  evaluationScore  EvaluationScore?
+  report           Report?
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model Transcript {
+  id        String   @id @default(cuid())
+  sessionId String   @unique
+  text      String
+  language  String   @default("en")
+  wordCount Int      @default(0)
+  charCount Int      @default(0)
+  createdAt DateTime @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
+
+model EmotionResult {
+  id          String   @id @default(cuid())
+  sessionId   String   @unique
+  emotion     String   // happy | sad | angry | neutral | fear | surprise
+  confidence  Float    // 0-100
+  scores      String   // JSON string of all emotion probabilities
+  createdAt   DateTime @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
+
+model SpeakerVerification {
+  id            String   @id @default(cuid())
+  sessionId     String   @unique
+  matchPercent  Float    // 0-100
+  verified      Boolean
+  confidence    Float    // 0-100
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
+
+model QualityAnalysis {
+  id                 String   @id @default(cuid())
+  sessionId          String   @unique
+  backgroundNoise    Float    // 0-100 (lower = cleaner)
+  pitch              Float    // Hz estimate
+  volume             Float    // 0-100 normalized loudness
+  speakingSpeed      Float    // words per minute
+  clarity            Float    // 0-100
+  pronunciationScore Float    // 0-100
+  pauses             Int      // count
+  pauseDurationSec   Float    @default(0)
+  fluencyScore       Float    // 0-100
+  confidenceScore    Float    // 0-100
+  grammarScore       Float    // 0-100
+  vocabularyScore    Float    // 0-100
+  details            String?  // JSON of extra metrics
+  createdAt          DateTime @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
+
+model EvaluationScore {
+  id                String   @id @default(cuid())
+  sessionId         String   @unique
+  pronunciation     Float    // 0-100
+  grammar           Float    // 0-100
+  communication     Float    // 0-100
+  confidence        Float    // 0-100
+  vocabulary        Float    // 0-100
+  fluency           Float    // 0-100
+  overallInterview  Float    // 0-100
+  overallSpeaking   Float    // 0-100
+  rating            String   // Excellent | Good | Average | Needs Improvement
+  createdAt         DateTime @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
+
+model Report {
+  id          String   @id @default(cuid())
+  sessionId   String   @unique
+  feedback    String   // JSON: strengths, weaknesses, tips, recommendations, etc.
+  summary     String
+  createdAt   DateTime @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
