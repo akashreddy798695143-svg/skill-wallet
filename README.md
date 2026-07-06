@@ -419,3 +419,4 @@ For architecture diagrams and request-flow sequences, see [`docs/ARCHITECTURE.md
 ## License
 
 This project is provided as-is for the Voice-Based Connect application. All rights reserved to the project authors. No open-source license is granted by default; contact the maintainers before redistributing or deploying the code in a commercial context.
+# speech-reco
