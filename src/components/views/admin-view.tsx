@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Shield,
   Users,
@@ -67,7 +67,7 @@ export function AdminView() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const [s, u] = await Promise.all([
@@ -81,11 +81,15 @@ export function AdminView() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    load();
-  }, []);
+    const timer = window.setTimeout(() => {
+      void load();
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [load]);
 
   async function toggleRole(u: AdminUser) {
     setBusyId(u.id);

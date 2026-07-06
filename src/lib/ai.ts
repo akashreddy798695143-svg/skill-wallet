@@ -1,5 +1,11 @@
-import ZAI from "z-ai-web-dev-sdk";
+import { execFile } from "child_process";
 import fs from "fs";
+import os from "os";
+import path from "path";
+import { promisify } from "util";
+import ZAI from "z-ai-web-dev-sdk";
+
+const execFileAsync = promisify(execFile);
 
 /**
  * AI service layer for Voice-Based Connect.
@@ -22,21 +28,31 @@ function getZAI(): Promise<ZAI> {
 /* ------------------------------------------------------------------ */
 
 export async function transcribeAudioFile(filePath: string): Promise<string> {
-  const zai = await getZAI();
-  const buffer = fs.readFileSync(filePath);
-  const base64 = buffer.toString("base64");
-  const response = await zai.audio.asr.create({ file_base64: base64 });
-  return (response?.text ?? "").trim();
+  try {
+    const zai = await getZAI();
+    const buffer = fs.readFileSync(filePath);
+    const base64 = buffer.toString("base64");
+    const response = await zai.audio.asr.create({ file_base64: base64 });
+    return (response?.text ?? "").trim();
+  } catch (error) {
+    console.warn("Falling back to placeholder transcription:", error);
+    return "(Transcription unavailable — speech service not configured.)";
+  }
 }
 
 /** Transcribe a raw audio Buffer (already loaded in memory). */
 export async function transcribeAudioBuffer(
   buffer: Buffer
 ): Promise<string> {
-  const zai = await getZAI();
-  const base64 = buffer.toString("base64");
-  const response = await zai.audio.asr.create({ file_base64: base64 });
-  return (response?.text ?? "").trim();
+  try {
+    const zai = await getZAI();
+    const base64 = buffer.toString("base64");
+    const response = await zai.audio.asr.create({ file_base64: base64 });
+    return (response?.text ?? "").trim();
+  } catch (error) {
+    console.warn("Falling back to placeholder transcription:", error);
+    return "(Transcription unavailable — speech service not configured.)";
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -53,28 +69,77 @@ export async function synthesizeSpeech(
   text: string,
   options: TTSOptions = {}
 ): Promise<Buffer> {
-  const zai = await getZAI();
   const voice = options.voice ?? "tongtong";
   const speed = clamp(options.speed ?? 1.0, 0.5, 2.0);
   const format = options.format ?? "wav";
 
-  // The TTS API limits input to 1024 chars; chunk longer text and concatenate WAV.
-  const chunks = splitText(text, 1000);
-  const parts: Buffer[] = [];
-  for (const chunk of chunks) {
-    const response = await zai.audio.tts.create({
-      input: chunk,
-      voice,
-      speed,
-      response_format: format,
-      stream: false,
-    });
-    const ab = await response.arrayBuffer();
-    parts.push(Buffer.from(new Uint8Array(ab)));
+  try {
+    const zai = await getZAI();
+
+    // The TTS API limits input to 1024 chars; chunk longer text and concatenate WAV.
+    const chunks = splitText(text, 1000);
+    const parts: Buffer[] = [];
+    for (const chunk of chunks) {
+      const response = await zai.audio.tts.create({
+        input: chunk,
+        voice,
+        speed,
+        response_format: format,
+        stream: false,
+      });
+      const ab = await response.arrayBuffer();
+      parts.push(Buffer.from(new Uint8Array(ab)));
+    }
+    return Buffer.concat(parts);
+  } catch (error) {
+    console.warn("Falling back to local macOS speech synthesis:", error);
+    return synthesizeWithSystemVoice(text, { voice, speed, format });
   }
-  // For simplicity concatenate buffers (works seamlessly for PCM; for WAV the
-  // first chunk's header is preserved which is acceptable for preview/download).
-  return Buffer.concat(parts);
+}
+
+async function synthesizeWithSystemVoice(
+  text: string,
+  options: TTSOptions
+): Promise<Buffer> {
+  const format = options.format ?? "wav";
+  const voice = options.voice ?? "tongtong";
+  const speed = clamp(options.speed ?? 1.0, 0.5, 2.0);
+
+  const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "vbc-tts-"));
+  const outputPath = path.join(tmpDir, `speech.${format === "mp3" ? "mp3" : "aiff"}`);
+  const safeText = text.replace(/\s+/g, " ").trim();
+
+  const voiceName = mapVoiceToSystemVoice(voice);
+  const args = ["-v", voiceName, "-o", outputPath, safeText];
+
+  await execFileAsync("say", args);
+
+  if (format === "wav") {
+    const wavPath = path.join(tmpDir, "speech.wav");
+    await execFileAsync("afconvert", ["-f", "WAVE", "-d", "LEI16@22050", outputPath, wavPath]);
+    const wavBuffer = await fs.promises.readFile(wavPath);
+    return wavBuffer;
+  }
+
+  const audioBuffer = await fs.promises.readFile(outputPath);
+  return audioBuffer;
+}
+
+function mapVoiceToSystemVoice(voice: string): string {
+  const normalized = voice.toLowerCase();
+  switch (normalized) {
+    case "tongtong":
+    case "chuichui":
+    case "xiaochen":
+    case "douji":
+    case "luodo":
+    case "kazi":
+      return "Samantha";
+    case "jam":
+      return "Daniel";
+    default:
+      return "Samantha";
+  }
 }
 
 export const AVAILABLE_VOICES = [

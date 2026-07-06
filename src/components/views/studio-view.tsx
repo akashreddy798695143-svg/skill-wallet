@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Mic,
@@ -68,26 +68,16 @@ export function StudioView() {
   const [busy, setBusy] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const loadLibrary = async () => {
+  const loadLibrary = useCallback(async () => {
     try {
       const res = await api.get<{ files: AudioFileData[] }>("/api/audio");
       setLibrary(res.files);
     } catch {
       /* ignore */
     }
-  };
-  useEffect(() => {
-    loadLibrary();
   }, []);
 
-  // When a new recording completes, upload it automatically.
-  useEffect(() => {
-    if (recorder.audio) {
-      void uploadBlob(recorder.audio.blob, recorder.audio.mimeType, `recording-${Date.now()}.webm`);
-    }
-  }, [recorder.audio]);
-
-  async function uploadBlob(blob: Blob, mime: string, name: string) {
+  const uploadBlob = useCallback(async (blob: Blob, mime: string, name: string) => {
     setUploading(true);
     try {
       const form = new FormData();
@@ -102,7 +92,26 @@ export function StudioView() {
     } finally {
       setUploading(false);
     }
-  }
+  }, [loadLibrary]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadLibrary();
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [loadLibrary]);
+
+  // When a new recording completes, upload it automatically.
+  useEffect(() => {
+    if (!recorder.audio) return;
+
+    const timer = window.setTimeout(() => {
+      void uploadBlob(recorder.audio.blob, recorder.audio.mimeType, `recording-${Date.now()}.webm`);
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, [recorder.audio, uploadBlob]);
 
   async function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
