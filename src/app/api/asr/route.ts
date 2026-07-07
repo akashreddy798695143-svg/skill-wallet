@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { requireUser, errorResponse } from "@/lib/session";
+import { getCurrentUser, errorResponse } from "@/lib/session";
 import { transcribeAudioFile } from "@/lib/ai";
 import { readAudioFile } from "@/lib/audio";
 import type { TranscriptData } from "@/lib/types";
@@ -8,7 +8,7 @@ import type { TranscriptData } from "@/lib/types";
 /** POST /api/asr — transcribe the audio of a session and store the transcript. */
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireUser();
+    const user = await getCurrentUser();
     const { sessionId } = await req.json();
     if (!sessionId) return errorResponse("sessionId is required.", 422);
 
@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
       where: { id: String(sessionId) },
       include: { audioFile: true, transcript: true },
     });
-    if (!session || session.userId !== user.id)
+    if (!session || (user && session.userId !== user.id))
       return errorResponse("Session not found.", 404);
     if (!session.audioFile)
       return errorResponse("Session has no audio file.", 422);

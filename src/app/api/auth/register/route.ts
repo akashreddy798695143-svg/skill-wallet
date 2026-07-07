@@ -1,5 +1,11 @@
 import { NextRequest } from "next/server";
-import { db } from "@/lib/db";
+import { db, withDbFallback } from "@/lib/db";
+import {
+  createFallbackLoginEntry,
+  createFallbackUser,
+  countFallbackUsers,
+  findFallbackUserByEmail,
+} from "@/lib/fallback-store";
 import {
   hashPassword,
   createSessionToken,
@@ -24,32 +30,54 @@ export async function POST(req: NextRequest) {
     if (!password || password.length < 6)
       return errorResponse("Password must be at least 6 characters.", 422);
 
-    const existing = await db.user.findUnique({ where: { email: cleanEmail } });
+    const existing = await withDbFallback(
+      async () => db.user.findUnique({ where: { email: cleanEmail } }),
+      await findFallbackUserByEmail(cleanEmail)
+    );
     if (existing)
       return errorResponse("An account with this email already exists.", 409);
 
-    // First registered user becomes the admin.
-    const userCount = await db.user.count();
+    const userCount = await withDbFallback(async () => db.user.count(), await countFallbackUsers());
     const role = userCount === 0 ? "ADMIN" : "USER";
 
-    const user = await db.user.create({
-      data: {
-        name: cleanName,
+    const user = await withDbFallback(
+      async () =>
+        db.user.create({
+          data: {
+            name: cleanName,
+            email: cleanEmail,
+            passwordHash: await hashPassword(password),
+            role,
+          },
+        }),
+      await createFallbackUser({
+        id: `fallback-user-${Date.now()}`,
         email: cleanEmail,
+        name: cleanName,
         passwordHash: await hashPassword(password),
         role,
-      },
-    });
+      })
+    );
 
-    await db.loginHistory.create({
-      data: {
+    await withDbFallback(
+      async () =>
+        db.loginHistory.create({
+          data: {
+            userId: user.id,
+            email: user.email,
+            ipAddress: getClientIp(req) ?? undefined,
+            userAgent: req.headers.get("user-agent") ?? undefined,
+            success: true,
+          },
+        }),
+      await createFallbackLoginEntry({
         userId: user.id,
         email: user.email,
         ipAddress: getClientIp(req) ?? undefined,
         userAgent: req.headers.get("user-agent") ?? undefined,
         success: true,
-      },
-    });
+      })
+    );
 
     const token = await createSessionToken({
       sub: user.id,

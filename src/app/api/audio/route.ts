@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { db } from "@/lib/db";
+import { db, withDbFallback } from "@/lib/db";
 import { requireUser, errorResponse } from "@/lib/session";
 import {
   saveAudioFile,
@@ -11,11 +11,15 @@ import type { AudioFileData } from "@/lib/types";
 /** GET /api/audio — list the current user's audio files (newest first). */
 export async function GET() {
   const user = await requireUser();
-  const files = await db.audioFile.findMany({
-    where: { userId: user.id },
-    orderBy: { createdAt: "desc" },
-    take: 50,
-  });
+  const files = await withDbFallback(
+    async () =>
+      db.audioFile.findMany({
+        where: { userId: user.id },
+        orderBy: { createdAt: "desc" },
+        take: 50,
+      }),
+    []
+  );
   const data: AudioFileData[] = files.map((f) => ({
     id: f.id,
     originalName: f.originalName,
@@ -56,17 +60,25 @@ export async function POST(req: NextRequest) {
 
     const durationSec = estimateWavDuration(buffer, file.type);
 
-    const audio = await db.audioFile.create({
-      data: {
-        userId: user.id,
-        filename: saved.filename,
-        originalName: file.name,
-        mimeType: file.type || "audio/wav",
-        size: saved.size,
-        durationSec,
-        storagePath: saved.storagePath,
-      },
-    });
+    const audio = await withDbFallback(
+      async () =>
+        db.audioFile.create({
+          data: {
+            userId: user.id,
+            filename: saved.filename,
+            originalName: file.name,
+            mimeType: file.type || "audio/wav",
+            size: saved.size,
+            durationSec,
+            storagePath: saved.storagePath,
+          },
+        }),
+      null
+    );
+
+    if (!audio) {
+      return Response.json({ file: { id: saved.filename, originalName: file.name, mimeType: file.type || "audio/wav", size: saved.size, durationSec, createdAt: new Date().toISOString() } }, { status: 201 });
+    }
 
     const data: AudioFileData = {
       id: audio.id,

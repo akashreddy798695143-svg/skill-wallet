@@ -1,5 +1,9 @@
 import { NextRequest } from "next/server";
-import { db } from "@/lib/db";
+import { db, withDbFallback } from "@/lib/db";
+import {
+  createFallbackLoginEntry,
+  findFallbackUserByEmail,
+} from "@/lib/fallback-store";
 import {
   verifyPassword,
   createSessionToken,
@@ -18,18 +22,31 @@ export async function POST(req: NextRequest) {
     if (!cleanEmail || !password)
       return errorResponse("Email and password are required.", 422);
 
-    const user = await db.user.findUnique({ where: { email: cleanEmail } });
+    const user = await withDbFallback(
+      async () => db.user.findUnique({ where: { email: cleanEmail } }),
+      await findFallbackUserByEmail(cleanEmail)
+    );
 
     const recordLogin = async (success: boolean) => {
-      await db.loginHistory.create({
-        data: {
-          userId: user?.id,
+      await withDbFallback(
+        async () =>
+          db.loginHistory.create({
+            data: {
+              userId: user?.id,
+              email: cleanEmail,
+              ipAddress: getClientIp(req) ?? undefined,
+              userAgent: req.headers.get("user-agent") ?? undefined,
+              success,
+            },
+          }),
+        await createFallbackLoginEntry({
+          userId: user?.id ?? null,
           email: cleanEmail,
           ipAddress: getClientIp(req) ?? undefined,
           userAgent: req.headers.get("user-agent") ?? undefined,
           success,
-        },
-      });
+        })
+      );
     };
 
     if (!user) {

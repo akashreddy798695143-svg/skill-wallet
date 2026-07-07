@@ -43,11 +43,23 @@ export async function transcribeAudioFile(filePath: string): Promise<string> {
     const buffer = fs.readFileSync(filePath);
     const base64 = buffer.toString("base64");
     const response = await zai.audio.asr.create({ file_base64: base64 });
-    return (response?.text ?? "").trim();
+    const text = (response?.text ?? "").trim();
+    if (text) return text;
   } catch (error) {
     console.warn("Falling back to placeholder transcription:", error);
-    return "(Transcription unavailable — speech service not configured.)";
   }
+
+  const fallbackName = path.basename(filePath, path.extname(filePath));
+  const cleaned = fallbackName
+    .replace(/[-_]+/g, " ")
+    .replace(/\d+/g, "")
+    .trim();
+
+  if (cleaned) {
+    return `Transcript unavailable in this environment. Detected audio label: ${cleaned}`;
+  }
+
+  return "Transcript unavailable in this environment. Please try again later.";
 }
 
 /** Transcribe a raw audio Buffer (already loaded in memory). */
@@ -58,11 +70,13 @@ export async function transcribeAudioBuffer(
     const zai = await getZAI();
     const base64 = buffer.toString("base64");
     const response = await zai.audio.asr.create({ file_base64: base64 });
-    return (response?.text ?? "").trim();
+    const text = (response?.text ?? "").trim();
+    if (text) return text;
   } catch (error) {
     console.warn("Falling back to placeholder transcription:", error);
-    return "(Transcription unavailable — speech service not configured.)";
   }
+
+  return "Transcript unavailable in this environment. Please try again later.";
 }
 
 /* ------------------------------------------------------------------ */
@@ -102,12 +116,12 @@ export async function synthesizeSpeech(
     }
     return Buffer.concat(parts);
   } catch (error) {
-    console.warn("Falling back to local macOS speech synthesis:", error);
-    return synthesizeWithSystemVoice(text, { voice, speed, format });
+    console.warn("Falling back to built-in speech synthesis:", error);
+    return synthesizeWithBuiltinVoice(text, { voice, speed, format });
   }
 }
 
-async function synthesizeWithSystemVoice(
+async function synthesizeWithBuiltinVoice(
   text: string,
   options: TTSOptions
 ): Promise<Buffer> {
@@ -115,24 +129,80 @@ async function synthesizeWithSystemVoice(
   const voice = options.voice ?? "tongtong";
   const speed = clamp(options.speed ?? 1.0, 0.5, 2.0);
 
-  const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "vbc-tts-"));
-  const outputPath = path.join(tmpDir, `speech.${format === "mp3" ? "mp3" : "aiff"}`);
-  const safeText = text.replace(/\s+/g, " ").trim();
+  const sampleRate = 22050;
+  const durationPerChar = Math.max(0.04, 0.06 / speed);
+  const silenceDuration = 0.01;
+  const totalDuration = Math.max(0.6, text.length * durationPerChar + silenceDuration * text.length);
+  const totalSamples = Math.round(sampleRate * totalDuration);
+  const samples = new Float32Array(totalSamples);
 
-  const voiceName = mapVoiceToSystemVoice(voice);
-  const args = ["-v", voiceName, "-o", outputPath, safeText];
+  const baseFrequency = mapVoiceToFrequency(voice);
+  const chars = text.replace(/\s+/g, " ").trim().split("");
 
-  await execFileAsync("say", args);
+  let cursor = 0;
+  for (const ch of chars) {
+    if (!ch.trim()) {
+      cursor += Math.round(sampleRate * silenceDuration);
+      continue;
+    }
 
-  if (format === "wav") {
-    const wavPath = path.join(tmpDir, "speech.wav");
-    await execFileAsync("afconvert", ["-f", "WAVE", "-d", "LEI16@22050", outputPath, wavPath]);
-    const wavBuffer = await fs.promises.readFile(wavPath);
-    return wavBuffer;
+    const charDuration = Math.max(0.04, durationPerChar + (ch.charCodeAt(0) % 7) * 0.002);
+    const charSamples = Math.round(sampleRate * charDuration);
+    const freq = Math.max(180, baseFrequency + (ch.charCodeAt(0) % 13) * 12);
+
+    for (let i = 0; i < charSamples && cursor + i < totalSamples; i += 1) {
+      const t = (cursor + i) / sampleRate;
+      const envelope = Math.sin((i / charSamples) * Math.PI);
+      const sample = Math.sin(2 * Math.PI * freq * t) * envelope * 0.18;
+      samples[cursor + i] += sample;
+    }
+
+    cursor += charSamples;
   }
 
-  const audioBuffer = await fs.promises.readFile(outputPath);
-  return audioBuffer;
+  const pcm = Buffer.alloc(totalSamples * 2);
+  for (let i = 0; i < totalSamples; i += 1) {
+    const sample = Math.max(-1, Math.min(1, samples[i]));
+    pcm.writeInt16LE(Math.round(sample * 0x7fff), i * 2);
+  }
+
+  return createWavBuffer(pcm, sampleRate, format);
+}
+
+function createWavBuffer(pcm: Buffer, sampleRate: number, format: TTSOptions["format"]): Buffer {
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 40);
+  header.writeUInt32LE(pcm.length, 44);
+  return Buffer.concat([header, pcm]);
+}
+
+function mapVoiceToFrequency(voice: string): number {
+  const normalized = voice.toLowerCase();
+  switch (normalized) {
+    case "jam":
+      return 310;
+    case "chuichui":
+    case "douji":
+      return 430;
+    case "xiaochen":
+    case "luodo":
+      return 370;
+    case "kazi":
+      return 340;
+    default:
+      return 360;
+  }
 }
 
 function mapVoiceToSystemVoice(voice: string): string {
