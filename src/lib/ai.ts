@@ -3,7 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { promisify } from "util";
-import ZAI from "z-ai-web-dev-sdk";
+import ZAIClient from "z-ai-web-dev-sdk";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,9 +17,19 @@ const execFileAsync = promisify(execFile);
  * NOTE: z-ai-web-dev-sdk MUST run on the server only.
  */
 
-let zaiPromise: Promise<ZAI> | null = null;
-function getZAI(): Promise<ZAI> {
-  if (!zaiPromise) zaiPromise = ZAI.create();
+type ZAIInstance = Awaited<ReturnType<typeof ZAIClient.create>>;
+let zaiPromise: Promise<ZAIInstance> | null = null;
+function getZAI(): Promise<ZAIInstance> {
+  if (!zaiPromise) {
+    const sdk = (ZAIClient as unknown as { default?: typeof ZAIClient }).default ?? ZAIClient;
+    const createClient = (sdk as typeof ZAIClient & { create?: () => Promise<ZAIInstance> }).create;
+
+    if (typeof createClient !== "function") {
+      throw new Error("Z.AI SDK is not available in this environment.");
+    }
+
+    zaiPromise = createClient();
+  }
   return zaiPromise;
 }
 

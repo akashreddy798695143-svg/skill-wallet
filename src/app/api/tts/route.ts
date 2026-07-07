@@ -1,11 +1,11 @@
 import { NextRequest } from "next/server";
-import { requireUser, errorResponse } from "@/lib/session";
+import { getCurrentUser, errorResponse } from "@/lib/session";
 import { synthesizeSpeech } from "@/lib/ai";
 
 /** POST /api/tts — generate speech audio from text and return it as a WAV. */
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireUser();
+    const user = await getCurrentUser();
     void user;
     const body = await req.json();
     const text = String(body.text ?? "").trim();
