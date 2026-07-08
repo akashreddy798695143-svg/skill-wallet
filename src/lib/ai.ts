@@ -182,8 +182,8 @@ function createWavBuffer(pcm: Buffer, sampleRate: number, format: TTSOptions["fo
   header.writeUInt32LE(sampleRate * 2, 28);
   header.writeUInt16LE(2, 32);
   header.writeUInt16LE(16, 34);
-  header.write("data", 40);
-  header.writeUInt32LE(pcm.length, 44);
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
   return Buffer.concat([header, pcm]);
 }
 
